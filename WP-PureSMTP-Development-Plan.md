@@ -2,7 +2,7 @@
 
 **Plugin Name:** WP PureSMTP  
 **Repository:** https://github.com/Steffenkt/WP-PureSMTP  
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **License:** GPLv2 or later  
 
 ---

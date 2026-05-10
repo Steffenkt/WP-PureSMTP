@@ -902,3 +902,12 @@ white-space: nowrap;
 
 .puresmtp-axis text { font-size: 11px; }
 .puresmtp-grid line { stroke-dasharray: 2,3; opacity: .8; }
+
+.puresmtp-password-error {
+color: #991b1b !important;
+background: #fef2f2;
+border-left: 3px solid var(--ps-red);
+padding: 8px 12px;
+border-radius: 4px;
+margin: 8px 0 !important;
+}

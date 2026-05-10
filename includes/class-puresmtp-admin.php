@@ -168,6 +168,17 @@ class PureSMTP_Admin {
 	// -------------------------------------------------------------------------
 
 	public function stop_sending_notice(): void {
+		// Surface any transient password-storage error from the last save.
+		$pw_error = get_transient( 'puresmtp_admin_error' );
+		if ( $pw_error && current_user_can( 'manage_options' ) ) {
+			delete_transient( 'puresmtp_admin_error' );
+			?>
+			<div class="notice notice-error is-dismissible">
+				<p><strong><?php esc_html_e( 'WP PureSMTP:', 'wp-puresmtp' ); ?></strong> <?php echo esc_html( (string) $pw_error ); ?></p>
+			</div>
+			<?php
+		}
+
 		if ( ! $this->options->get( 'stop_sending' ) ) {
 			return;
 		}
@@ -418,7 +429,11 @@ class PureSMTP_Admin {
 				<tr id="puresmtp-auth-row-password" class="puresmtp-auth-row">
 					<th><label for="puresmtp_password"><?php esc_html_e( 'SMTP Password', 'wp-puresmtp' ); ?></label></th>
 					<td>
-						<?php if ( $this->options->get( 'password' ) ) : ?>
+						<?php
+						$pw_stored = (string) $this->options->get( 'password' );
+						$pw_ok     = '' === $pw_stored || '' !== $this->options->decrypt_password( $pw_stored );
+						?>
+						<?php if ( '' !== $pw_stored ) : ?>
 							<div class="puresmtp-password-set">
 								<span class="puresmtp-password-dots">••••••••</span>
 								<label>
@@ -426,11 +441,21 @@ class PureSMTP_Admin {
 									<?php esc_html_e( 'Remove password', 'wp-puresmtp' ); ?>
 								</label>
 							</div>
-							<p class="description"><?php esc_html_e( 'A password is stored. Check "Remove password" to clear it, or enter a new one below.', 'wp-puresmtp' ); ?></p>
+							<?php if ( $pw_ok ) : ?>
+								<p class="description"><?php esc_html_e( 'A password is stored. Check "Remove password" to clear it, or enter a new one below.', 'wp-puresmtp' ); ?></p>
+							<?php else : ?>
+								<p class="description puresmtp-password-error">
+									<strong><?php esc_html_e( 'Stored password cannot be decrypted.', 'wp-puresmtp' ); ?></strong><br>
+									<?php esc_html_e( 'This usually happens after WordPress security keys (AUTH_KEY) were rotated or the site was migrated. Please re-enter your SMTP password below to fix it.', 'wp-puresmtp' ); ?>
+								</p>
+							<?php endif; ?>
 						<?php endif; ?>
 						<input type="password" id="puresmtp_password" name="puresmtp_password"
 							value="" class="regular-text" autocomplete="new-password"
+							spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other"
+							readonly onfocus="this.removeAttribute('readonly');"
 							placeholder="<?php esc_attr_e( 'Enter new password', 'wp-puresmtp' ); ?>">
+						<p class="description"><?php esc_html_e( 'Tip: leave empty to keep the current password. The field is set to read-only on load to prevent your browser from auto-filling it with your WordPress login password.', 'wp-puresmtp' ); ?></p>
 					</td>
 				</tr>
 			</table>
@@ -1104,11 +1129,31 @@ class PureSMTP_Admin {
 		$this->options->set( 'encryption', in_array( $enc, $enc_allowed, true ) ? $enc : 'tls' );
 
 		// Password.
+		// IMPORTANT: never run the password through sanitize_text_field() – it
+		// strips HTML-like substrings (anything from `<` onwards), line breaks,
+		// invalid UTF-8 and octets, which silently mangles strong SMTP passwords
+		// such as "Pa$$w<>rd!". We only need wp_unslash() to undo the slashes
+		// that WordPress adds to $_POST.
 		if ( isset( $_POST['puresmtp_remove_password'] ) ) {
 			$this->options->set( 'password', '' );
-		} elseif ( ! empty( $_POST['puresmtp_password'] ) ) {
-			$plain = sanitize_text_field( wp_unslash( $_POST['puresmtp_password'] ) );
-			$this->options->set( 'password', $this->options->encrypt_password( $plain ) );
+		} elseif ( isset( $_POST['puresmtp_password'] ) && '' !== (string) $_POST['puresmtp_password'] ) {
+			$plain = (string) wp_unslash( $_POST['puresmtp_password'] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+
+			$encrypted = $this->options->encrypt_password( $plain );
+
+			// Verify the encrypt/decrypt round-trip immediately. If it fails the
+			// AUTH_KEY constant is unusable (e.g. empty during early bootstrap or
+			// the openssl extension is missing) and we must NOT silently store a
+			// value that we can never read back.
+			if ( '' === $encrypted || $plain !== $this->options->decrypt_password( $encrypted ) ) {
+				set_transient(
+					'puresmtp_admin_error',
+					__( 'The SMTP password could not be securely stored on this server. Please ensure the AUTH_KEY constant in wp-config.php is set and the OpenSSL PHP extension is enabled.', 'wp-puresmtp' ),
+					60
+				);
+			} else {
+				$this->options->set( 'password', $encrypted );
+			}
 		}
 	}
 
