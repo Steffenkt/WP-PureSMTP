@@ -794,3 +794,111 @@ table.wp-list-table.puresmtp-table.striped > tbody > tr:nth-child(even) > th {
 		padding: 20px 20px 28px;
 	}
 }
+
+/* ── Statistics tab ──────────────────────────────────────────────────────── */
+.puresmtp-stats-toolbar {
+display: flex;
+align-items: center;
+gap: 10px;
+margin-bottom: 18px;
+}
+
+.puresmtp-stats-toolbar label {
+font-size: 12.5px;
+font-weight: 600;
+color: var(--ps-text-2);
+}
+
+.puresmtp-stats-grid {
+display: grid;
+grid-template-columns: repeat(4, 1fr);
+gap: 14px;
+margin-bottom: 28px;
+}
+
+@media (max-width: 900px) {
+.puresmtp-stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.puresmtp-stat-card {
+background: var(--ps-card);
+border: 1px solid var(--ps-border);
+border-radius: var(--ps-radius-lg);
+padding: 16px 18px;
+box-shadow: 0 1px 2px rgba(0,0,0,.03);
+border-left: 4px solid var(--ps-blue);
+}
+
+.puresmtp-stat-card--total { border-left-color: var(--ps-blue); }
+.puresmtp-stat-card--ok    { border-left-color: var(--ps-green); }
+.puresmtp-stat-card--err   { border-left-color: var(--ps-red); }
+
+.puresmtp-stat-label {
+font-size: 11.5px;
+font-weight: 600;
+letter-spacing: .4px;
+text-transform: uppercase;
+color: var(--ps-text-3);
+margin-bottom: 6px;
+}
+
+.puresmtp-stat-value {
+font-size: 26px;
+font-weight: 700;
+color: var(--ps-text);
+line-height: 1.1;
+}
+
+.puresmtp-chart {
+background: var(--ps-card);
+border: 1px solid var(--ps-border);
+border-radius: var(--ps-radius-lg);
+padding: 16px;
+margin-bottom: 22px;
+min-height: 200px;
+}
+
+.puresmtp-chart svg {
+display: block;
+max-width: 100%;
+height: auto;
+}
+
+.puresmtp-chart-empty {
+text-align: center;
+color: var(--ps-text-3);
+padding: 60px 20px;
+font-size: 13px;
+}
+
+.puresmtp-chart-row {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 22px;
+}
+
+@media (max-width: 1000px) {
+.puresmtp-chart-row { grid-template-columns: 1fr; }
+}
+
+.puresmtp-chart-col h2 { margin-top: 0 !important; }
+
+.puresmtp-tooltip {
+position: absolute;
+pointer-events: none;
+background: #1e293b;
+color: #f1f5f9;
+font-size: 12px;
+line-height: 1.4;
+padding: 7px 10px;
+border-radius: 6px;
+box-shadow: 0 4px 12px rgba(0,0,0,.18);
+z-index: 10000;
+transition: opacity .12s;
+white-space: nowrap;
+}
+
+.puresmtp-tooltip strong { color: #fff; }
+
+.puresmtp-axis text { font-size: 11px; }
+.puresmtp-grid line { stroke-dasharray: 2,3; opacity: .8; }

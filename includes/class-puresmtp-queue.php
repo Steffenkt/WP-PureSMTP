@@ -67,6 +67,12 @@ class PureSMTP_Queue {
 			return false;
 		}
 
+		// Mail will be sent now: count it against the rate limit so subsequent
+		// sends within the same interval are correctly throttled. Counting at
+		// dispatch time (rather than only on success) is what protects the
+		// SMTP provider from hitting their own per-account limit.
+		$this->increment_send_count();
+
 		return null;
 	}
 
@@ -197,7 +203,8 @@ class PureSMTP_Queue {
 		$retry_seconds = $this->retry_interval_seconds();
 		$max_attempts  = (int) $this->options->get( 'retry_max_attempts', '5' );
 		$now           = current_time( 'mysql' );
-		$next_retry    = gmdate( 'Y-m-d H:i:s', time() + $retry_seconds );
+		// Use site timezone (matches current_time('mysql') used by the cron comparison).
+		$next_retry    = wp_date( 'Y-m-d H:i:s', time() + $retry_seconds );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->insert(
@@ -283,7 +290,8 @@ class PureSMTP_Queue {
 		$retry_secs   = $this->retry_interval_seconds();
 
 		$new_status = ( $new_attempts >= $max_attempts ) ? 'failed' : 'pending';
-		$next_retry = gmdate( 'Y-m-d H:i:s', time() + $retry_secs );
+		// Use site timezone (matches current_time('mysql') used by the cron comparison).
+		$next_retry = wp_date( 'Y-m-d H:i:s', time() + $retry_secs );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->update(

@@ -324,6 +324,158 @@ class PureSMTP_Logger {
 	}
 
 	/**
+	 * Aggregate sent / failed counts per day for the last $days days.
+	 * Days without entries are filled with 0 so the chart shows a continuous timeline.
+	 *
+	 * @param int $days Number of days to include (default 30).
+	 * @return array{
+	 *     daily: array<int,array{date:string,sent:int,failed:int}>,
+	 *     totals: array{sent:int,failed:int,total:int,success_rate:float},
+	 *     top_recipients: array<int,array{recipient:string,count:int}>,
+	 *     top_sources: array<int,array{source:string,count:int}>,
+	 *     hourly: array<int,array{hour:int,count:int}>
+	 * }
+	 */
+	public function get_stats( int $days = 30 ): array {
+		global $wpdb;
+
+		$days  = max( 1, $days );
+		$table = $wpdb->prefix . 'puresmtp_log';
+
+		// Cutoff in site timezone – matches the `date` column written via current_time('mysql').
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
+
+		// Daily counts.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT DATE(date) AS d,
+				        SUM(status = 'sent')   AS sent,
+				        SUM(status = 'failed') AS failed
+				   FROM {$table}
+				  WHERE date >= %s
+				  GROUP BY DATE(date)
+				  ORDER BY d ASC",
+				$cutoff
+			),
+			ARRAY_A
+		) ?: [];
+
+		// Index by date for gap-filling.
+		$by_date = [];
+		foreach ( $rows as $r ) {
+			$by_date[ $r['d'] ] = [
+				'sent'   => (int) $r['sent'],
+				'failed' => (int) $r['failed'],
+			];
+		}
+
+		$daily      = [];
+		$total_sent   = 0;
+		$total_failed = 0;
+		// Build the list of dates in the site's timezone so the daily buckets
+		// line up with what the user sees in the table.
+		$today_ts = current_datetime()->getTimestamp();
+		for ( $i = $days - 1; $i >= 0; $i-- ) {
+			$date  = wp_date( 'Y-m-d', $today_ts - ( $i * DAY_IN_SECONDS ) );
+			$sent   = $by_date[ $date ]['sent']   ?? 0;
+			$failed = $by_date[ $date ]['failed'] ?? 0;
+			$daily[] = [
+				'date'   => $date,
+				'sent'   => $sent,
+				'failed' => $failed,
+			];
+			$total_sent   += $sent;
+			$total_failed += $failed;
+		}
+
+		$total = $total_sent + $total_failed;
+		$rate  = $total > 0 ? round( ( $total_sent / $total ) * 100, 1 ) : 0.0;
+
+		// Top 10 recipients.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$recipients = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT recipient, COUNT(*) AS c
+				   FROM {$table}
+				  WHERE date >= %s
+				  GROUP BY recipient
+				  ORDER BY c DESC
+				  LIMIT 10",
+				$cutoff
+			),
+			ARRAY_A
+		) ?: [];
+		$top_recipients = array_map(
+			static fn( $r ) => [
+				'recipient' => (string) $r['recipient'],
+				'count'     => (int) $r['c'],
+			],
+			$recipients
+		);
+
+		// Top 10 source plugins.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$sources = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT COALESCE(NULLIF(source_plugin,''),'(unknown)') AS s, COUNT(*) AS c
+				   FROM {$table}
+				  WHERE date >= %s
+				  GROUP BY s
+				  ORDER BY c DESC
+				  LIMIT 10",
+				$cutoff
+			),
+			ARRAY_A
+		) ?: [];
+		$top_sources = array_map(
+			static fn( $r ) => [
+				'source' => (string) $r['s'],
+				'count'  => (int) $r['c'],
+			],
+			$sources
+		);
+
+		// Hourly distribution (0–23) over the period.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$hour_rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT HOUR(date) AS h, COUNT(*) AS c
+				   FROM {$table}
+				  WHERE date >= %s
+				  GROUP BY HOUR(date)
+				  ORDER BY h ASC",
+				$cutoff
+			),
+			ARRAY_A
+		) ?: [];
+		$hour_map = [];
+		foreach ( $hour_rows as $r ) {
+			$hour_map[ (int) $r['h'] ] = (int) $r['c'];
+		}
+		$hourly = [];
+		for ( $h = 0; $h < 24; $h++ ) {
+			$hourly[] = [
+				'hour'  => $h,
+				'count' => $hour_map[ $h ] ?? 0,
+			];
+		}
+
+		return [
+			'daily'          => $daily,
+			'totals'         => [
+				'sent'         => $total_sent,
+				'failed'       => $total_failed,
+				'total'        => $total,
+				'success_rate' => $rate,
+			],
+			'top_recipients' => $top_recipients,
+			'top_sources'    => $top_sources,
+			'hourly'         => $hourly,
+		];
+	}
+
+	/**
 	 * Delete log entries older than $days days.
 	 *
 	 * @param int $days Retention period in days.
@@ -331,7 +483,8 @@ class PureSMTP_Logger {
 	public function cleanup( int $days ): void {
 		global $wpdb;
 
-		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( absint( $days ) * DAY_IN_SECONDS ) );
+		// Cutoff in site timezone – matches the `date` column.
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - ( absint( $days ) * DAY_IN_SECONDS ) );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->query(
@@ -361,7 +514,8 @@ class PureSMTP_Logger {
 		}
 
 		if ( ! empty( $filters['days'] ) ) {
-			$cutoff       = gmdate( 'Y-m-d H:i:s', time() - ( absint( $filters['days'] ) * DAY_IN_SECONDS ) );
+			// Cutoff in site timezone – matches the `date` column.
+			$cutoff       = wp_date( 'Y-m-d H:i:s', time() - ( absint( $filters['days'] ) * DAY_IN_SECONDS ) );
 			$conditions[] = 'date >= %s';
 			$values[]     = $cutoff;
 		}

@@ -17,7 +17,37 @@ class PureSMTP_Admin {
 	private PureSMTP_Queue   $queue;
 
 	/** Valid tabs. */
-	private const TABS = [ 'general', 'log', 'queue', 'testmail', 'misc' ];
+	private const TABS = [ 'general', 'log', 'queue', 'stats', 'testmail', 'misc' ];
+
+	/**
+	 * Format a MySQL date string (stored in site timezone via current_time('mysql'))
+	 * using the site's date and time formats and the site timezone.
+	 *
+	 * `strtotime()` would interpret the string in PHP's default timezone (usually UTC
+	 * on WordPress) and `wp_date()` would then add the site offset on top, producing
+	 * a doubly-shifted, wrong result. Building a DateTime explicitly in wp_timezone()
+	 * avoids that.
+	 *
+	 * @param string $mysql_date "Y-m-d H:i:s" string.
+	 * @param string $format    Optional explicit format. Defaults to site date+time format.
+	 * @return string Localised, formatted date – or the raw input on parse failure.
+	 */
+	private function format_site_date( string $mysql_date, string $format = '' ): string {
+		if ( '' === $mysql_date ) {
+			return '';
+		}
+
+		if ( '' === $format ) {
+			$format = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
+		}
+
+		$dt = \DateTime::createFromFormat( 'Y-m-d H:i:s', $mysql_date, wp_timezone() );
+		if ( false === $dt ) {
+			return $mysql_date;
+		}
+
+		return wp_date( $format, $dt->getTimestamp() );
+	}
 
 	public function __construct(
 		PureSMTP_Options $options,
@@ -72,6 +102,48 @@ class PureSMTP_Admin {
 			PURESMTP_VERSION,
 			true
 		);
+
+		// Statistics tab: enqueue local D3 + chart script and inject the data.
+		$active_tab = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'general'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( 'stats' === $active_tab ) {
+			wp_enqueue_script(
+				'puresmtp-d3',
+				PURESMTP_PLUGIN_URL . 'assets/js/d3.min.js',
+				[],
+				'7.9.0',
+				true
+			);
+
+			wp_enqueue_script(
+				'puresmtp-stats',
+				PURESMTP_PLUGIN_URL . 'assets/js/stats.js',
+				[ 'puresmtp-d3' ],
+				PURESMTP_VERSION,
+				true
+			);
+
+			$days  = isset( $_GET['days'] ) ? max( 1, absint( $_GET['days'] ) ) : 30; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$stats = $this->logger->get_stats( $days );
+			wp_localize_script(
+				'puresmtp-stats',
+				'pureSMTPStats',
+				[
+					'data'   => $stats,
+					'days'   => $days,
+					'i18n'   => [
+						'sent'      => __( 'Sent', 'wp-puresmtp' ),
+						'failed'    => __( 'Failed', 'wp-puresmtp' ),
+						'total'     => __( 'Total', 'wp-puresmtp' ),
+						'date'      => __( 'Date', 'wp-puresmtp' ),
+						'count'     => __( 'Count', 'wp-puresmtp' ),
+						'hour'      => __( 'Hour', 'wp-puresmtp' ),
+						'recipient' => __( 'Recipient', 'wp-puresmtp' ),
+						'source'    => __( 'Source plugin', 'wp-puresmtp' ),
+						'noData'    => __( 'No data for this period.', 'wp-puresmtp' ),
+					],
+				]
+			);
+		}
 
 		wp_localize_script(
 			'puresmtp-admin',
@@ -157,6 +229,9 @@ class PureSMTP_Admin {
 						case 'queue':
 							$this->render_tab_queue();
 							break;
+						case 'stats':
+							$this->render_tab_stats();
+							break;
 						case 'testmail':
 							$this->render_tab_testmail();
 							break;
@@ -183,6 +258,7 @@ class PureSMTP_Admin {
 			'general' => __( 'General', 'wp-puresmtp' ),
 			'log'     => __( 'Email Log', 'wp-puresmtp' ),
 			'queue'   => __( 'Queue', 'wp-puresmtp' ),
+			'stats'   => __( 'Statistics', 'wp-puresmtp' ),
 			'testmail'=> __( 'Test Email', 'wp-puresmtp' ),
 			'misc'    => __( 'Misc', 'wp-puresmtp' ),
 		];
@@ -191,6 +267,7 @@ class PureSMTP_Admin {
 			'general'  => 'dashicons-admin-settings',
 			'log'      => 'dashicons-list-view',
 			'queue'    => 'dashicons-email-alt2',
+			'stats'    => 'dashicons-chart-bar',
 			'testmail' => 'dashicons-email',
 			'misc'     => 'dashicons-admin-tools',
 		];
@@ -468,7 +545,7 @@ class PureSMTP_Admin {
 							<input type="checkbox" name="entry_ids[]" value="<?php echo esc_attr( $entry['id'] ); ?>">
 						</td>
 						<td><?php echo esc_html( $entry['id'] ); ?></td>
-						<td><?php echo esc_html( wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $entry['date'] ) ) ); ?></td>
+						<td><?php echo esc_html( $this->format_site_date( $entry['date'] ) ); ?></td>
 						<td class="puresmtp-truncate"><?php echo esc_html( $entry['recipient'] ); ?></td>
 						<td class="puresmtp-truncate"><?php echo esc_html( $entry['subject'] ); ?></td>
 						<td>
@@ -511,7 +588,7 @@ class PureSMTP_Admin {
 		<a href="<?php echo esc_url( $back_url ); ?>" class="button">&larr; <?php esc_html_e( 'Back to log', 'wp-puresmtp' ); ?></a>
 
 		<table class="form-table puresmtp-detail-table">
-			<tr><th><?php esc_html_e( 'Date / Time', 'wp-puresmtp' ); ?></th><td><?php echo esc_html( $entry['date'] ); ?></td></tr>
+			<tr><th><?php esc_html_e( 'Date / Time', 'wp-puresmtp' ); ?></th><td><?php echo esc_html( $this->format_site_date( $entry['date'] ) ); ?></td></tr>
 			<tr><th><?php esc_html_e( 'To', 'wp-puresmtp' ); ?></th><td><?php echo esc_html( $entry['recipient'] ); ?></td></tr>
 			<tr><th><?php esc_html_e( 'Subject', 'wp-puresmtp' ); ?></th><td><?php echo esc_html( $entry['subject'] ); ?></td></tr>
 			<tr>
@@ -724,8 +801,8 @@ class PureSMTP_Admin {
 							<input type="checkbox" name="queue_ids[]" value="<?php echo esc_attr( $item['id'] ); ?>">
 						</td>
 						<td><?php echo esc_html( $item['id'] ); ?></td>
-						<td><?php echo esc_html( $item['date_added'] ); ?></td>
-						<td><?php echo esc_html( $item['next_retry'] ); ?></td>
+						<td><?php echo esc_html( $this->format_site_date( $item['date_added'] ) ); ?></td>
+						<td><?php echo esc_html( $this->format_site_date( $item['next_retry'] ) ); ?></td>
 						<td><?php echo esc_html( $item['attempt_count'] . ' / ' . $item['max_attempts'] ); ?></td>
 						<td class="puresmtp-truncate"><?php echo esc_html( $item['recipient'] ); ?></td>
 						<td class="puresmtp-truncate"><?php echo esc_html( $item['subject'] ); ?></td>
@@ -800,6 +877,71 @@ class PureSMTP_Admin {
 			</p>
 		</form>
 		<?php
+	}
+
+	// =========================================================================
+	// TAB: Statistics
+	// =========================================================================
+
+	private function render_tab_stats(): void {
+		$days  = isset( $_GET['days'] ) ? max( 1, absint( $_GET['days'] ) ) : 30; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$stats = $this->logger->get_stats( $days );
+		$tot   = $stats['totals'];
+		$base  = admin_url( 'admin.php?page=wp-puresmtp&tab=stats' );
+		?>
+		<div class="puresmtp-stats-toolbar">
+			<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" class="puresmtp-filter-form">
+				<input type="hidden" name="page" value="wp-puresmtp">
+				<input type="hidden" name="tab"  value="stats">
+				<label for="puresmtp_stats_days"><?php esc_html_e( 'Period', 'wp-puresmtp' ); ?></label>
+				<select id="puresmtp_stats_days" name="days" onchange="this.form.submit()">
+					<?php
+					foreach ( [ 7 => __( 'Last 7 days', 'wp-puresmtp' ), 14 => __( 'Last 14 days', 'wp-puresmtp' ), 30 => __( 'Last 30 days', 'wp-puresmtp' ), 60 => __( 'Last 60 days', 'wp-puresmtp' ), 90 => __( 'Last 90 days', 'wp-puresmtp' ) ] as $val => $label ) :
+						?>
+						<option value="<?php echo esc_attr( (string) $val ); ?>" <?php selected( $days, $val ); ?>><?php echo esc_html( $label ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</form>
+		</div>
+
+		<div class="puresmtp-stats-grid">
+			<div class="puresmtp-stat-card puresmtp-stat-card--total">
+				<div class="puresmtp-stat-label"><?php esc_html_e( 'Total emails', 'wp-puresmtp' ); ?></div>
+				<div class="puresmtp-stat-value"><?php echo esc_html( number_format_i18n( $tot['total'] ) ); ?></div>
+			</div>
+			<div class="puresmtp-stat-card puresmtp-stat-card--ok">
+				<div class="puresmtp-stat-label"><?php esc_html_e( 'Sent', 'wp-puresmtp' ); ?></div>
+				<div class="puresmtp-stat-value"><?php echo esc_html( number_format_i18n( $tot['sent'] ) ); ?></div>
+			</div>
+			<div class="puresmtp-stat-card puresmtp-stat-card--err">
+				<div class="puresmtp-stat-label"><?php esc_html_e( 'Failed', 'wp-puresmtp' ); ?></div>
+				<div class="puresmtp-stat-value"><?php echo esc_html( number_format_i18n( $tot['failed'] ) ); ?></div>
+			</div>
+			<div class="puresmtp-stat-card">
+				<div class="puresmtp-stat-label"><?php esc_html_e( 'Success rate', 'wp-puresmtp' ); ?></div>
+				<div class="puresmtp-stat-value"><?php echo esc_html( number_format_i18n( $tot['success_rate'], 1 ) ); ?> %</div>
+			</div>
+		</div>
+
+		<h2><?php esc_html_e( 'Daily volume', 'wp-puresmtp' ); ?></h2>
+		<div id="puresmtp-chart-daily" class="puresmtp-chart"></div>
+
+		<div class="puresmtp-chart-row">
+			<div class="puresmtp-chart-col">
+				<h2><?php esc_html_e( 'Hourly distribution', 'wp-puresmtp' ); ?></h2>
+				<div id="puresmtp-chart-hourly" class="puresmtp-chart puresmtp-chart--small"></div>
+			</div>
+			<div class="puresmtp-chart-col">
+				<h2><?php esc_html_e( 'Top recipients', 'wp-puresmtp' ); ?></h2>
+				<div id="puresmtp-chart-recipients" class="puresmtp-chart puresmtp-chart--small"></div>
+			</div>
+		</div>
+
+		<h2><?php esc_html_e( 'Top source plugins', 'wp-puresmtp' ); ?></h2>
+		<div id="puresmtp-chart-sources" class="puresmtp-chart puresmtp-chart--small"></div>
+
+		<?php
+		unset( $stats, $base );
 	}
 
 	// =========================================================================

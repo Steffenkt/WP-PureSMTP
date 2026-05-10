@@ -3,7 +3,7 @@
  * Plugin Name:       WP PureSMTP
  * Plugin URI:        https://github.com/Steffenkt/WP-PureSMTP
  * Description:       Replace WordPress default mail with a clean, pure SMTP connection. No third-party APIs, no bloat — just SMTP.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Requires at least: 5.7
  * Requires PHP:      7.4
  * Author:            Steffenkt
